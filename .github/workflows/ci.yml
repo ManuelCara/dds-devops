@@ -1,3 +1,4 @@
+
 name: CI - Docker GHCR y Docker Hub
 
 on:
@@ -84,3 +85,11 @@ jobs:
         run: |
           docker push ${{ steps.tags.outputs.dockerhub_image }}:latest
           docker push ${{ steps.tags.outputs.dockerhub_image }}:${{ steps.tags.outputs.short_sha }}
+
+      # 9. Disparar el despliegue automático en Render
+      - name: Deploy automatico en Render
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+          echo "Solicitud de despliegue enviada a Render"
