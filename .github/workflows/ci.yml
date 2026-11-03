@@ -1,4 +1,4 @@
-name: CI - Docker y GHCR
+name: CI - Docker GHCR y Docker Hub
 
 on:
   push:
@@ -14,46 +14,73 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Descargar el código del repositorio
       - name: Obtener codigo
         uses: actions/checkout@v4
 
-      - name: Definir nombre de imagen
-        id: image
-        shell: bash
+      # 2. Definir nombres y etiquetas de las imágenes
+      - name: Definir imagenes y etiquetas
+        id: tags
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "ghcr_image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "dockerhub_image=${DOCKERHUB_USERNAME,,}/dds-devops" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
+      # 3. Construir una sola imagen con cuatro etiquetas
       - name: Construir imagen Docker
-        run: docker build -t dds-devops-demo:test .
+        run: |
+          docker build \
+            -t ${{ steps.tags.outputs.ghcr_image }}:latest \
+            -t ${{ steps.tags.outputs.ghcr_image }}:${{ steps.tags.outputs.short_sha }} \
+            -t ${{ steps.tags.outputs.dockerhub_image }}:latest \
+            -t ${{ steps.tags.outputs.dockerhub_image }}:${{ steps.tags.outputs.short_sha }} \
+            .
 
+      # 4. Validar que la aplicación funcione
       - name: Verificar funcionamiento
         run: |
-          docker run -d --name web-test \
+          docker run -d --rm --name web-test \
             -p 127.0.0.1:8080:80 \
-            dds-devops-demo:test
+            ${{ steps.tags.outputs.ghcr_image }}:${{ steps.tags.outputs.short_sha }}
+
           for i in $(seq 1 15); do
             if curl -fsS http://127.0.0.1:8080/ | grep -q "Hola DevOps"; then
               echo "Prueba exitosa"
+              docker stop web-test
               exit 0
             fi
             sleep 1
           done
+
           docker logs web-test
+          docker stop web-test || true
           exit 1
 
-      - name: Autenticarse en GHCR
+      # 5. Autenticarse en GitHub Container Registry
+      - name: Login en GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Etiquetar imagen
-        run: |
-          docker tag dds-devops-demo:test \
-            ${{ steps.image.outputs.name }}:${GITHUB_SHA::7}
+      # 6. Autenticarse en Docker Hub
+      - name: Login en Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # 7. Publicar las dos etiquetas en GHCR
       - name: Publicar imagen en GHCR
         run: |
-          docker push \
-            ${{ steps.image.outputs.name }}:${GITHUB_SHA::7}
+          docker push ${{ steps.tags.outputs.ghcr_image }}:latest
+          docker push ${{ steps.tags.outputs.ghcr_image }}:${{ steps.tags.outputs.short_sha }}
+
+      # 8. Publicar las dos etiquetas en Docker Hub
+      - name: Publicar imagen en Docker Hub
+        run: |
+          docker push ${{ steps.tags.outputs.dockerhub_image }}:latest
+          docker push ${{ steps.tags.outputs.dockerhub_image }}:${{ steps.tags.outputs.short_sha }}
